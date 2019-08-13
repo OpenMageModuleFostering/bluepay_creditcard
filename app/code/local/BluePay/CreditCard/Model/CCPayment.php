@@ -30,6 +30,7 @@ class BluePay_CreditCard_Model_CCPayment extends Mage_Payment_Model_Method_Cc
 {
     const CGI_URL = 'https://secure.bluepay.com/interfaces/bp10emu';
     const STQ_URL = 'https://secure.bluepay.com/interfaces/stq';
+    const CURRENT_VERSION = '1.5.5.0';
 
     const REQUEST_METHOD_CC     = 'CREDIT';
     const REQUEST_METHOD_ECHECK = 'ACH';
@@ -182,7 +183,6 @@ class BluePay_CreditCard_Model_CCPayment extends Mage_Payment_Model_Method_Cc
      */
     public function capture(Varien_Object $payment, $amount)
     {
-	error_log(print_r($_POST, 1));
 	$payment->setAmount($amount);
 	$result =$this->_checkDuplicate($payment);
         if ($payment->getCcTransId()) {
@@ -298,7 +298,7 @@ class BluePay_CreditCard_Model_CCPayment extends Mage_Payment_Model_Method_Cc
         }
         $request->setMode(($this->getConfigData('test_mode') == 'TEST') ? 'TEST' : 'LIVE');
 
-	if ($payment->getAdditionalData()) {
+	if ($payment->getAdditionalData() && !$payment->getRrno()) {
 	    $request->setRrno($payment->getAdditionalData());
 	    $payment->setRrno($payment->getAdditionalData());
 	}
@@ -342,7 +342,7 @@ class BluePay_CreditCard_Model_CCPayment extends Mage_Payment_Model_Method_Cc
             if (!empty($billing)) {
                 $request->setName1($billing->getFirstname())
                     ->setName2($billing->getLastname())
-                    ->setCompany($billing->getCompany())
+                    ->setCompanyName($billing->getCompany())
                     ->setAddr1($billing->getStreet(1))
                     ->setCity($billing->getCity())
                     ->setState($billing->getRegion())
@@ -351,7 +351,7 @@ class BluePay_CreditCard_Model_CCPayment extends Mage_Payment_Model_Method_Cc
                     ->setPhone($billing->getTelephone())
                     ->setFax($billing->getFax())
                     ->setCustomId($billing->getCustomerId())
-		    ->setComment($comment)
+                    ->setComment($comment)
                     ->setEmail($order->getCustomerEmail());
             }
 
@@ -393,9 +393,7 @@ class BluePay_CreditCard_Model_CCPayment extends Mage_Payment_Model_Method_Cc
     protected function _postRequest(Varien_Object $request)
     {
        	$debugData = array('request' => $request->getData());
-	//if (!self::$_dupe) {
        	$result = Mage::getModel('creditcard/CCPayment_result');
-	//}
 	if (isset($_POST["?Result"])) {
 		$_POST["Result"] = $_POST["?Result"];
 		unset($_POST["?Result"]);
@@ -407,10 +405,10 @@ class BluePay_CreditCard_Model_CCPayment extends Mage_Payment_Model_Method_Cc
         	$client->setConfig(array(
             	'maxredirects'=>0,
             	'timeout'=>30,
+		'useragent'=>'BluePay Magento Credit Card Plugin/' . self::CURRENT_VERSION,
        		));
         	$client->setParameterPost($request->getData());
 		$comma_separated = implode(",", $request->getData());
-		//Mage::throwException($this->_wrapGatewayError($comma_separated));
         	$client->setMethod(Zend_Http_Client::POST);
         	try {
             	    $response = $client->request();
@@ -421,9 +419,6 @@ class BluePay_CreditCard_Model_CCPayment extends Mage_Payment_Model_Method_Cc
                     Mage::throwException($this->_wrapGatewayError($e->getMessage()));
         	}
 		$r = $response->getHeader('location');
-		//if (self::$_dupe) {
-		//	return $result;
-		//}
         	if ($r) {
             	    $result->setResult($this->parseHeader($r, 'value', self::Result))
                     	->setInvoiceId($this->parseHeader($r, 'value', self::INVOICE_ID))
@@ -447,6 +442,16 @@ class BluePay_CreditCard_Model_CCPayment extends Mage_Payment_Model_Method_Cc
 	} else {
 		$result->setResult($_POST["Result"]);
 		$result->setMessage($_POST["MESSAGE"]);
+		$result->setRrno($_POST["RRNO"]);
+		$result->setCcNumber($_POST["PAYMENT_ACCOUNT"]);
+		$result->setCcExpMonth($_POST["CC_EXPIRES_MONTH"]);
+		$result->setCcExpYear($_POST["CC_EXPIRES_YEAR"]);
+		$result->setPaymentType($_POST["PAYMENT_TYPE"]);
+		$result->setCardType($_POST["CARD_TYPE"]);
+		$result->setAuthCode($_POST["AUTH_CODE"]);
+		$result->setAvs($_POST["AVS"]);
+		$result->setCvv2($_POST["CVV2"]);
+		$this->assignBluePayToken($result->getRrno());
 	}
         return $result;
     }

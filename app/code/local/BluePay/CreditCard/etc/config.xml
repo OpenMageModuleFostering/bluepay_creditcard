@@ -103,13 +103,13 @@
                 <payment_action>AUTH</payment_action>
                 <test>1</test>
                 <title>Credit Card</title>
-				<useccv>1</useccv>
-				<usecvv_backend>0</usecvv_backend>
+		<useccv>1</useccv>
+		<usecvv_backend>0</usecvv_backend>
                 <trans_key backend_model="adminhtml/system_config_backend_encrypted"/>
                 <allowspecific>0</allowspecific>
                 <currency>USD</currency>
-				<duplicate_check>0</duplicate_check>
-				<use_iframe>0</use_iframe>
+		<duplicate_check>0</duplicate_check>
+		<use_iframe>0</use_iframe>
             </ccpayment>
         </payment>
     </default>

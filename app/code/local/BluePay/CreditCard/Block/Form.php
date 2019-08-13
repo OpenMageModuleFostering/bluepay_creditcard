@@ -4,6 +4,10 @@ class BluePay_CreditCard_Block_Form extends Mage_Payment_Block_Form
     protected function _construct()
     {
         parent::_construct();
+	if (Mage::app()->getStore()->isAdmin()) {
+		$this->setTemplate('bluepay/creditcard.phtml');
+		return;
+	}
 	if (Mage::getStoreConfig('payment/ccpayment/use_iframe') == 1) {
         	$this->setTemplate('bluepay/creditcardiframe.phtml');
 	} else {
