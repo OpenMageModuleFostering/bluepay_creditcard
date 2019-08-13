@@ -1,0 +1,8 @@
+<config>
+    <modules>
+        <BluePay_CreditCard>
+            <active>true</active>
+            <codePool>local</codePool>
+        </BluePay_CreditCard>
+    </modules>
+</config>

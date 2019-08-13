@@ -1,0 +1,691 @@
+<?php
+
+/**
+ * Magento
+ *
+ * NOTICE OF LICENSE
+ *
+ * This source file is subject to the Open Software License (OSL 3.0)
+ * that is bundled with this package in the file LICENSE.txt.
+ * It is also available through the world-wide-web at this URL:
+ * http://opensource.org/licenses/osl-3.0.php
+ * If you did not receive a copy of the license and are unable to
+ * obtain it through the world-wide-web, please send an email
+ * to license@magentocommerce.com so we can send you a copy immediately.
+ *
+ * DISCLAIMER
+ *
+ * Do not edit or add to this file if you wish to upgrade Magento to newer
+ * versions in the future. If you wish to customize Magento for your
+ * needs please refer to http://www.magentocommerce.com for more information.
+ *
+ * @category    BluePay
+ * @package     BluePay_CreditCard
+ * @copyright   Copyright (c) 2010 BluePay Processing, LLC (http://www.bluepay.com)
+ * @license     http://opensource.org/licenses/osl-3.0.php  Open Software License (OSL 3.0)
+ */
+
+
+class BluePay_CreditCard_Model_CCPayment extends Mage_Payment_Model_Method_Cc
+{
+    const CGI_URL = 'https://secure.bluepay.com/interfaces/bp10emu';
+    const STQ_URL = 'https://secure.bluepay.com/interfaces/stq';
+
+    const REQUEST_METHOD_CC     = 'CREDIT';
+    const REQUEST_METHOD_ECHECK = 'ACH';
+
+    const REQUEST_TYPE_AUTH_CAPTURE = 'SALE';
+    const REQUEST_TYPE_AUTH_ONLY    = 'AUTH';
+    const REQUEST_TYPE_CAPTURE_ONLY = 'CAPTURE';
+    const REQUEST_TYPE_CREDIT       = 'REFUND';
+    const REQUEST_TYPE_VOID         = 'VOID';
+    const REQUEST_TYPE_PRIOR_AUTH_CAPTURE = 'PRIOR_AUTH_CAPTURE';
+
+    const ECHECK_ACCT_TYPE_CHECKING = 'CHECKING';
+    const ECHECK_ACCT_TYPE_BUSINESS = 'BUSINESSCHECKING';
+    const ECHECK_ACCT_TYPE_SAVINGS  = 'SAVINGS';
+
+    const ECHECK_TRANS_TYPE_CCD = 'CCD';
+    const ECHECK_TRANS_TYPE_PPD = 'PPD';
+    const ECHECK_TRANS_TYPE_TEL = 'TEL';
+    const ECHECK_TRANS_TYPE_WEB = 'WEB';
+
+    const RESPONSE_DELIM_CHAR = ',';
+
+    const RESPONSE_CODE_APPROVED = 'APPROVED';
+    const RESPONSE_CODE_DECLINED = 'DECLINED';
+    const RESPONSE_CODE_ERROR    = 'ERROR';
+    const RESPONSE_CODE_MISSING  = 'MISSING';
+    const RESPONSE_CODE_HELD     = 4;
+	
+
+        const INVOICE_ID = 0;
+        const BANK_NAME = 1;
+        const PAYMENT_ACCOUNT = 2;
+        const AUTH_CODE = 3;
+        const CARD_TYPE = 4;
+        const AMOUNT = 5;
+        const REBID = 6;
+        const AVS = 7;
+        const ORDER_ID = 8;
+        const CARD_EXPIRE = 9;
+        const Result = 10;
+        const RRNO = 11;
+        const CVV2 = 12;
+        const PAYMENT_TYPE = 13;
+        const MESSAGE = 14;
+
+	protected $responseHeaders;
+	protected $tempVar;
+
+    	protected $_code  = 'ccpayment';
+	protected $_formBlockType = 'creditcard/form';
+	protected static $_dupe = true;
+	protected static $_underscoreCache = array();
+
+    /**
+     * Availability options
+     */
+    protected $_isGateway               = true;
+    protected $_canAuthorize            = true;
+    protected $_canCapture              = true;
+    protected $_canCapturePartial       = true;
+    protected $_canRefund               = true;
+    protected $_canRefundInvoicePartial = true;
+    protected $_canVoid                 = true;
+    protected $_canUseInternal          = true;
+    protected $_canUseCheckout          = true;
+    protected $_canUseForMultishipping  = true;
+    protected $_canSaveCc 		= false;
+
+    protected $_allowCurrencyCode = array('USD');
+
+    /**
+     * Fields that should be replaced in debug with '***'
+     *
+     * @var array
+     */
+    protected $_debugReplacePrivateDataKeys = array('x_login', 'x_tran_key',
+                                                    'x_card_num', 'x_exp_date',
+                                                    'x_card_code', 'x_bank_aba_code',
+                                                    'x_bank_name', 'x_bank_acct_num',
+                                                    'x_bank_acct_type','x_bank_acct_name',
+                                                    'x_echeck_type');
+
+    /**
+     * Check method for processing with base currency
+     *
+     * @param string $currencyCode
+     * @return boolean
+     */
+    public function canUseForCurrency($currencyCode)
+    {
+        if (!in_array($currencyCode, $this->getAcceptedCurrencyCodes())) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Return array of currency codes supplied by Payment Gateway
+     *
+     * @return array
+     */
+    public function getAcceptedCurrencyCodes()
+    {
+        if (!$this->hasData('_accepted_currency')) {
+            $acceptedCurrencyCodes = $this->_allowCurrencyCode;
+            $acceptedCurrencyCodes[] = $this->getConfigData('currency');
+            $this->setData('_accepted_currency', $acceptedCurrencyCodes);
+        }
+        return $this->_getData('_accepted_currency');
+    }
+
+    /**
+     * Send authorize request to gateway
+    */
+	
+    public function authorize(Varien_Object $payment, $amount)
+    {
+        if ($amount <= 0) {
+            Mage::throwException(Mage::helper('paygate')->__('Invalid amount for authorization.'));
+        }
+        $payment->setTransactionType(self::REQUEST_TYPE_AUTH_ONLY);
+        $payment->setAmount($amount);
+
+        $request= $this->_buildRequest($payment);
+        $result = $this->_postRequest($request);
+
+        $payment->setCcApproval($result->getAuthCode())
+            ->setLastTransId($result->getRrno())
+            ->setTransactionId($result->getRrno())
+            ->setIsTransactionClosed(0)
+            ->setCcTransId($result->getRrno())
+            ->setCcAvsStatus($result->getAvs())
+            ->setCcCidStatus($result->getCvv2());
+
+        switch ($result->getResult()) {
+            case self::RESPONSE_CODE_APPROVED:
+                $payment->setStatus(self::STATUS_APPROVED);
+                return $this;
+            case self::RESPONSE_CODE_DECLINED:
+                Mage::throwException(Mage::helper('paygate')->__('The transaction has been declined'));
+			case self::RESPONSE_CODE_ERROR:
+                Mage::throwException(Mage::helper('paygate')->__('Error: ' . $result->getMessage()));
+			default:
+                Mage::throwException(Mage::helper('paygate')->__('An error has occured with your payment.'));
+        }
+    }
+
+    /**
+     * Send capture request to gateway
+     */
+    public function capture(Varien_Object $payment, $amount)
+    {
+	error_log(print_r($_POST, 1));
+	$payment->setAmount($amount);
+	$result =$this->_checkDuplicate($payment);
+        if ($payment->getCcTransId()) {
+            $payment->setTransactionType(self::REQUEST_TYPE_CAPTURE_ONLY);
+        } else {
+            $payment->setTransactionType(self::REQUEST_TYPE_AUTH_CAPTURE);
+        }
+	$payment->setRrno($payment->getCcTransId());
+        $request = $this->_buildRequest($payment);
+        $result = $this->_postRequest($request); 
+        if ($result->getResult() == self::RESPONSE_CODE_APPROVED) {
+            $payment->setStatus(self::STATUS_APPROVED);
+            ////$payment->setCcTransId($result->getTransactionId());
+            $payment->setLastTransId($result->getRrno());
+            if (!$payment->getParentTransactionId() || $result->getRrno() != $payment->getParentTransactionId()) {
+                $payment->setTransactionId($result->getRrno());
+            }
+            return $this;
+        }
+	switch ($result->getResult()) {
+		case self::RESPONSE_CODE_DECLINED:
+			Mage::throwException(Mage::helper('paygate')->__('The transaction has been declined.'));
+		case self::RESPONSE_CODE_ERROR || self::RESPONSE_CODE_MISSING:
+			if ($result->getMessage() == 'Already%20Captured') {
+				$payment->setTransactionType(self::REQUEST_TYPE_AUTH_CAPTURE);
+				$request=$this->_buildRequest($payment);
+				$result =$this->_postRequest($request);
+				        if ($result->getResult() == self::RESPONSE_CODE_APPROVED && $result->getMessage() != 'DUPLICATE') {
+            					$payment->setStatus(self::STATUS_APPROVED);
+            					$payment->setLastTransId($result->getRrno());
+            					if (!$payment->getParentTransactionId() || $result->getRrno() != $payment->getParentTransactionId()) {
+                					$payment->setTransactionId($result->getRrno());
+            					}
+            					return $this;
+        				} else {
+						Mage::throwException(Mage::helper('paygate')->__('Error: ' . $result->getMessage()));
+					}
+			} else {
+				Mage::throwException(Mage::helper('paygate')->__('Error: ' . $result->getMessage()));
+			}
+		default:
+			Mage::throwException(Mage::helper('paygate')->__('An error has occured with your payment.'));
+	}
+        Mage::throwException(Mage::helper('paygate')->__('Error in capturing the payment.'));
+    }
+	
+
+    /**
+     * Void the payment through gateway
+     */
+    public function void(Varien_Object $payment)
+    {
+        if ($payment->getParentTransactionId()) {
+			$order = $payment->getOrder();
+            $payment->setTransactionType(self::REQUEST_TYPE_CREDIT);
+			$payment->setAmount($amount);
+			$payment->setRrno($payment->getParentTransactionId());
+            $request = $this->_buildRequest($payment);
+            $result = $this->_postRequest($request);
+            if ($result->getResult()==self::RESPONSE_CODE_APPROVED) {
+                 $payment->setStatus(self::STATUS_APPROVED);
+				 $order->setState(Mage_Sales_Model_Order::STATE_CANCELED, true)->save();
+                 return $this;
+            }
+            $payment->setStatus(self::STATUS_ERROR);
+            Mage::throwException($this->_wrapGatewayError($result->getMessage()));
+        }
+        $payment->setStatus(self::STATUS_ERROR);
+        Mage::throwException(Mage::helper('paygate')->__('Invalid transaction ID.'));
+    }
+
+    /**
+     * refund the amount with transaction id
+     */
+    public function refund(Varien_Object $payment, $amount)
+    {
+        if ($payment->getRefundTransactionId() && $amount > 0) {
+            $payment->setTransactionType(self::REQUEST_TYPE_CREDIT);
+			$payment->setRrno($payment->getRefundTransactionId());
+			$payment->setAmount($amount);
+            $request = $this->_buildRequest($payment);
+            $request->setRrno($payment->getRefundTransactionId());
+            $result = $this->_postRequest($request);
+            if ($result->getResult()==self::RESPONSE_CODE_APPROVED) {
+                $payment->setStatus(self::STATUS_SUCCESS);
+                return $this;
+            }
+			if ($result->getResult()==self::RESPONSE_CODE_DECLINED) {
+                Mage::throwException($this->_wrapGatewayError('DECLINED'));
+            }
+			if ($result->getResult()==self::RESPONSE_CODE_ERROR) {
+                Mage::throwException($this->_wrapGatewayError('ERROR'));
+            }			
+            Mage::throwException($this->_wrapGatewayError($result->getRrno()));
+        }
+        Mage::throwException(Mage::helper('paygate')->__('Error in refunding the payment.'));
+    }
+
+    /**
+     * Prepare request to gateway
+     */
+    protected function _buildRequest(Varien_Object $payment)
+    {
+        $order = $payment->getOrder();
+        $this->setStore($order->getStoreId());
+
+        if (!$payment->getPaymentType()) {
+            $payment->setPaymentType(self::REQUEST_METHOD_CC);
+        }
+        $request = Mage::getModel('creditcard/CCPayment_request');
+        if ($order && $order->getIncrementId()) {
+            $request->setInvoiceID($order->getIncrementId());
+        }
+        $request->setMode(($this->getConfigData('test_mode') == 'TEST') ? 'TEST' : 'LIVE');
+
+	if ($payment->getAdditionalData()) {
+	    $request->setRrno($payment->getAdditionalData());
+	    $payment->setRrno($payment->getAdditionalData());
+	}
+
+        $request->setMerchant($this->getConfigData('login'))
+            ->setTransactionType($payment->getTransactionType())
+            ->setPaymentType($payment->getPaymentType())
+			->setTamperProofSeal($this->calcTPS($payment));
+        if($payment->getAmount()){
+            $request->setAmount($payment->getAmount(),2);
+        }
+        if ($payment->getCcTransId()){
+                $request->setRrno($payment->getCcTransId());
+        }
+        switch ($payment->getTransactionType()) {
+            case self::REQUEST_TYPE_CREDIT:
+            case self::REQUEST_TYPE_VOID:
+            case self::REQUEST_TYPE_CAPTURE_ONLY:
+                $request->setRrno($payment->getCcTransId());
+                break;
+        }
+		$cart = Mage::helper('checkout/cart')->getCart()->getItemsCount();
+		$cartSummary = Mage::helper('checkout/cart')->getCart()->getSummaryQty();
+		Mage::getSingleton('core/session', array('name'=>'frontend'));
+		$session = Mage::getSingleton('checkout/session');
+
+		$comment = "";
+
+		foreach ($session->getQuote()->getAllItems() as $item) {
+    
+			$comment .= $item->getQty() . ' ';
+			$comment .= '[' . $item->getSku() . ']' . ' ';
+			$comment .= $item->getName() . ' ';
+			$comment .= $item->getDescription() . ' ';
+			$comment .= $item->getBaseCalculationPrice . ' ';
+		}
+
+
+        if (!empty($order)) {
+            $billing = $order->getBillingAddress();
+            if (!empty($billing)) {
+                $request->setName1($billing->getFirstname())
+                    ->setName2($billing->getLastname())
+                    ->setCompany($billing->getCompany())
+                    ->setAddr1($billing->getStreet(1))
+                    ->setCity($billing->getCity())
+                    ->setState($billing->getRegion())
+                    ->setZipcode($billing->getPostcode())
+                    ->setCountry($billing->getCountry())
+                    ->setPhone($billing->getTelephone())
+                    ->setFax($billing->getFax())
+                    ->setCustomId($billing->getCustomerId())
+		    ->setComment($comment)
+                    ->setEmail($order->getCustomerEmail());
+            }
+
+            $shipping = $order->getShippingAddress();
+            if (!empty($shipping)) {
+                $request->setXShipToFirstName($shipping->getFirstname())
+                    ->setXShipToLastName($shipping->getLastname())
+                    ->setXShipToCompany($shipping->getCompany())
+                    ->setXShipToAddress($shipping->getStreet(1))
+                    ->setXShipToCity($shipping->getCity())
+                    ->setXShipToState($shipping->getRegion())
+                    ->setXShipToZip($shipping->getPostcode())
+                    ->setXShipToCountry($shipping->getCountry());
+            }
+        }
+
+        switch ($payment->getPaymentType()) {
+            case self::REQUEST_METHOD_CC:
+                if($payment->getCcNumber()){
+		    $temp = $payment->getCcExpYear();
+	       	    $CcExpYear = str_split($temp, 2);
+                    $request->setCcNum($payment->getCcNumber())
+                        ->setCcExpires(sprintf('%02d%02d', $payment->getCcExpMonth(), $CcExpYear[1]))
+                        ->setCvccvv2($payment->getCcCid());
+                }
+                break;
+
+            case self::REQUEST_METHOD_ECHECK:
+                $request->setAchRouting($payment->getEcheckRoutingNumber())
+                    ->setAchAccount($payment->getEcheckAccountNumber())
+                    ->setAchAccountType($payment->getEcheckAccountType())
+                    ->setName($payment->getEcheckAccountName())
+                    ->setDocType($payment->getEcheckType());
+                break;
+        }
+        return $request;
+    }
+
+    protected function _postRequest(Varien_Object $request)
+    {
+       	$debugData = array('request' => $request->getData());
+	//if (!self::$_dupe) {
+       	$result = Mage::getModel('creditcard/CCPayment_result');
+	//}
+	if (isset($_POST["?Result"])) {
+		$_POST["Result"] = $_POST["?Result"];
+		unset($_POST["?Result"]);
+	}
+	if (!isset($_POST["Result"])) {
+        	$client = new Varien_Http_Client();
+        	$uri = $this->getConfigData('cgi_url');
+        	$client->setUri($uri ? $uri : self::CGI_URL);
+        	$client->setConfig(array(
+            	'maxredirects'=>0,
+            	'timeout'=>30,
+       		));
+        	$client->setParameterPost($request->getData());
+		$comma_separated = implode(",", $request->getData());
+		//Mage::throwException($this->_wrapGatewayError($comma_separated));
+        	$client->setMethod(Zend_Http_Client::POST);
+        	try {
+            	    $response = $client->request();
+        	}
+        	catch (Exception $e) {
+            	    $debugData['result'] = $result->getData();
+            	    $this->_debug($debugData);
+                    Mage::throwException($this->_wrapGatewayError($e->getMessage()));
+        	}
+		$r = $response->getHeader('location');
+		//if (self::$_dupe) {
+		//	return $result;
+		//}
+        	if ($r) {
+            	    $result->setResult($this->parseHeader($r, 'value', self::Result))
+                    	->setInvoiceId($this->parseHeader($r, 'value', self::INVOICE_ID))
+			->setBankName($this->parseHeader($r, 'value', self::BANK_NAME))
+                    	->setMessage($this->parseHeader($r, 'value', self::MESSAGE))
+                    	->setAuthCode($this->parseHeader($r, 'value', self::AUTH_CODE))
+                    	->setAvs($this->parseHeader($r, 'value', self::AVS))
+                    	->setRrno($this->parseHeader($r, 'value', self::RRNO))
+                    	->setAmount($this->parseHeader($r, 'value', self::AMOUNT))
+                    	->setPaymentType($this->parseHeader($r, 'value', self::PAYMENT_TYPE))
+                    	->setOrderId($this->parseHeader($r, 'value', self::ORDER_ID))
+                    	->setCvv2($this->parseHeader($r, 'value', self::CVV2));
+		    $this->assignBluePayToken($result->getRrno());
+        	} 
+        	else {
+             	    Mage::throwException(Mage::helper('paygate')->__('Error in payment gateway.'));
+        	}
+
+        	$debugData['result'] = $result->getData();
+        	$this->_debug($debugData);
+	} else {
+		$result->setResult($_POST["Result"]);
+		$result->setMessage($_POST["MESSAGE"]);
+	}
+        return $result;
+    }
+
+    protected function _checkDuplicate(Varien_Object $payment)
+    {
+	if ($this->getConfigData('duplicate_check') == '0') {
+		return;
+	}
+	$order = $payment->getOrder();
+	$billing = $order->getBillingAddress();
+	$reportStart = date("Y-m-d H:i:s", time() - (3600 * 5) - $this->getConfigData('duplicate_check'));
+	$reportEnd = date("Y-m-d H:i:s", time() - (3600 * 5));
+	$hashstr = $this->getConfigData('trans_key') . $this->getConfigData('login') .
+	$reportStart . $reportEnd;
+	$request = Mage::getModel('creditcard/CCPayment_request');
+        $request->setData("MODE", $this->getConfigData('test_mode') == 'TEST' ? 'TEST' : 'LIVE');
+        $request->setData("TAMPER_PROOF_SEAL", bin2hex(md5($hashstr, true)));
+	$request->setData("ACCOUNT_ID", $this->getConfigData('login'));
+	$request->setData("REPORT_START_DATE", $reportStart);
+	$request->setData("REPORT_END_DATE", $reportEnd);
+	$request->setData("EXCLUDE_ERRORS", 1);
+	$request->setData("ISNULL_f_void", 1);
+	$request->setData("name1", $billing['firstname']);
+	$request->setData("name2", $billing['lastname']);
+	$request->setData("amount", $payment->getAmount());
+	$request->setData("status", '1');
+	$request->setData("IGNORE_NULL_STR", '0');
+	$request->setData("trans_type", "SALE");
+ 	$client = new Varien_Http_Client();
+
+        $client->setUri($uri ? $uri : self::STQ_URL);
+        $client->setConfig(array(
+            'maxredirects'=>0,
+            'timeout'=>30,
+        ));
+        $client->setParameterPost($request->getData());
+        $client->setMethod(Zend_Http_Client::POST);
+        try {
+            $response = $client->request();
+        }
+        catch (Exception $e) {
+
+            $this->_debug($debugData);
+            Mage::throwException($this->_wrapGatewayError($e->getMessage()));
+        }
+	$p = parse_str($client->request()->getBody());
+        if ($id) {
+	    $conn = Mage::getSingleton('core/resource')->getConnection('core_read'); 
+	    $result = $conn->fetchAll("SELECT * FROM sales_payment_transaction WHERE txn_id='$id'");
+	    if ($result)
+		return;
+	    self::$_dupe = true;
+	    $payment->setTransactionType(self::REQUEST_TYPE_CREDIT);
+            $payment->setCcTransId($id);
+	    $payment->setRrno($id);
+            $request = $this->_buildRequest($payment);
+            $result = $this->_postRequest($request);
+	    $payment->setCcTransId('');
+        } 
+    }
+	
+
+    /**
+     * Gateway response wrapper
+     */
+    protected function _wrapGatewayError($text)
+    {
+        return Mage::helper('paygate')->__('Gateway error: %s', $text);
+    }
+	
+	protected final function calcTPS(Varien_Object $payment) {
+	
+		$order = $payment->getOrder();
+		$billing = $order->getBillingAddress();
+
+		$hashstr = $this->getConfigData('trans_key') . $this->getConfigData('login') . 
+		$payment->getTransactionType() . $payment->getAmount() . $payment->getRrno() . 
+		$this->getConfigData('test_mode');
+		return bin2hex( md5($hashstr, true) );
+	}	
+ 
+	protected function parseHeader($header, $nameVal, $pos) {
+		$nameVal = ($nameVal == 'name') ? '0' : '1';
+		$s = explode("?", $header);
+		$t = explode("&", $s[1]);
+		$value = explode("=", $t[$pos]);
+		return $value[$nameVal];
+	}
+	
+    public function validate()
+    {
+        /*
+        * calling parent validate function
+        */
+        $info = $this->getInfoInstance();
+        $errorMsg = false;
+        $availableTypes = explode(',',$this->getConfigData('cctypes'));
+
+        $ccNumber = $info->getCcNumber();
+
+        // remove credit card number delimiters such as "-" and space
+        $ccNumber = preg_replace('/[\-\s]+/', '', $ccNumber);
+        $info->setCcNumber($ccNumber);
+
+        $ccType = '';
+	
+	if (in_array($info->getCcType(), $availableTypes)){
+            if ($this->validateCcNum($ccNumber)
+                // Other credit card type number validation
+                || ($this->OtherCcType($info->getCcType()) && $this->validateCcNumOther($ccNumber))) {
+
+                $ccType = 'OT';
+                $ccTypeRegExpList = array(
+                    //Solo, Switch or Maestro. International safe
+                    /*
+                    // Maestro / Solo
+                    'SS'  => '/^((6759[0-9]{12})|(6334|6767[0-9]{12})|(6334|6767[0-9]{14,15})'
+                               . '|(5018|5020|5038|6304|6759|6761|6763[0-9]{12,19})|(49[013][1356][0-9]{12})'
+                               . '|(633[34][0-9]{12})|(633110[0-9]{10})|(564182[0-9]{10}))([0-9]{2,3})?$/',
+                    */
+                    // Solo only
+                    'SO' => '/(^(6334)[5-9](\d{11}$|\d{13,14}$))|(^(6767)(\d{12}$|\d{14,15}$))/',
+                    'SM' => '/(^(5[0678])\d{11,18}$)|(^(6[^05])\d{11,18}$)|(^(601)[^1]\d{9,16}$)|(^(6011)\d{9,11}$)'
+                            . '|(^(6011)\d{13,16}$)|(^(65)\d{11,13}$)|(^(65)\d{15,18}$)'
+                            . '|(^(49030)[2-9](\d{10}$|\d{12,13}$))|(^(49033)[5-9](\d{10}$|\d{12,13}$))'
+                            . '|(^(49110)[1-2](\d{10}$|\d{12,13}$))|(^(49117)[4-9](\d{10}$|\d{12,13}$))'
+                            . '|(^(49118)[0-2](\d{10}$|\d{12,13}$))|(^(4936)(\d{12}$|\d{14,15}$))/',
+                    // Visa
+                    'VI'  => '/^4[0-9]{12}([0-9]{3})?$/',
+                    // Master Card
+                    'MC'  => '/^5[1-5][0-9]{14}$/',
+                    // American Express
+                    'AE'  => '/^3[47][0-9]{13}$/',
+                    // Discovery
+                    'DI'  => '/^6011[0-9]{12}$/',
+                    // JCB
+                    'JCB' => '/^(3[0-9]{15}|(2131|1800)[0-9]{11})$/'
+                );
+
+                foreach ($ccTypeRegExpList as $ccTypeMatch=>$ccTypeRegExp) {
+                    if (preg_match($ccTypeRegExp, $ccNumber)) {
+                        $ccType = $ccTypeMatch;
+                        break;
+                    }
+                }
+
+		if (!$this->OtherCcType($info->getCcType()) && $ccType!=$info->getCcType()) {
+                    $errorMsg = Mage::helper('payment')->__('Credit card number mismatch with credit card type.');
+                }
+            }
+            else {
+                $errorMsg = Mage::helper('payment')->__('Invalid Credit Card Number');
+            }
+
+        }
+        else {
+            $errorMsg = Mage::helper('payment')->__('Credit card type is not allowed for this payment method.');
+        }
+
+        //validate credit card verification number
+        if ($errorMsg === false && $this->hasVerification()) {
+            $verifcationRegEx = $this->getVerificationRegEx();
+            $regExp = isset($verifcationRegEx[$info->getCcType()]) ? $verifcationRegEx[$info->getCcType()] : '';
+            if (!$info->getCcCid() || !$regExp || !preg_match($regExp ,$info->getCcCid())){
+                $errorMsg = Mage::helper('payment')->__('Please enter a valid credit card verification number.');
+            }
+        }
+
+        if ($ccType != 'SS' && !$this->_validateExpDate($info->getCcExpYear(), $info->getCcExpMonth())) {
+            $errorMsg = Mage::helper('payment')->__('Incorrect credit card expiration date.');
+        }
+
+        if($errorMsg) {
+	    if ($this->getConfigData('use_iframe') == '1') {
+		$errorMsg = '';
+	    }
+        }
+
+        //This must be after all validation conditions
+        if ($this->getIsCentinelValidationEnabled()) {
+            $this->getCentinelValidator()->validate($this->getCentinelValidationData());
+        }
+
+        return $this;
+    }
+
+    public function assignData($data)
+    {
+        if (!($data instanceof Varien_Object)) {
+            $data = new Varien_Object($data);
+        }
+
+        $info = $this->getInfoInstance();
+        $info->setCcType($data->getCcType())
+            ->setCcOwner($data->getCcOwner())
+            ->setCcLast4(substr($data->getCcNumber(), -4))
+            ->setCcNumber($data->getCcNumber())
+            ->setCcCid($data->getCcCid())
+            ->setCcExpMonth($data->getCcExpMonth())
+            ->setCcExpYear($data->getCcExpYear())
+            ->setCcSsIssue($data->getCcSsIssue())
+            ->setCcSsStartMonth($data->getCcSsStartMonth())
+            ->setCcSsStartYear($data->getCcSsStartYear())
+	    ->setAdditionalData($data->getBpToken());
+        return $this;
+
+    }
+
+    public function assignBluePayToken($token)
+    {
+	$info = $this->getInfoInstance();
+	$info->setAdditionalData($token);
+    }
+
+    public function prepareSave()
+    {
+        $info = $this->getInfoInstance();
+
+        if ($this->_canSaveCc) {
+            $info->setCcNumberEnc($info->encrypt('xxxx-'.$info->getCcLast4()));
+        }
+		if ($info->getAdditionalData()) {
+			$info->setAdditionalData($info->getAdditionalData());
+		}
+        //$info->setCcCidEnc($info->encrypt($info->getCcCid()));
+        $info->setCcNumber(null)
+            ->setCcCid(null);
+        return $this;
+
+    }	
+	
+	public function hasVerificationBackend()
+	{
+        $configData = $this->getConfigData('useccv_backend');
+        if(is_null($configData)){
+            return true;
+        }
+        return (bool) $configData;
+    }
+
+}
