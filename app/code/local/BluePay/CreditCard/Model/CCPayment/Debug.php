@@ -30,6 +30,6 @@ class BluePay_CreditCard_Model_CCPayment_Debug extends Mage_Core_Model_Abstract
 {
     protected function _construct()
     {
-        $this->_init(creditcard/ccpayment_debug');
+        $this->_init('creditcard/ccpayment_debug');
     }
 }

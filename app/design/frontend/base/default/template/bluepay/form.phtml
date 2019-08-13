@@ -27,15 +27,30 @@ $phone = $address->getTelephone();
 $email = $address->getEmail();
 $session = Mage::getSingleton('checkout/session');
 $comment = "";
+$i = 1;
+$level3 = [];
 foreach ($session->getQuote()->getAllItems() as $item) {
     $comment .= $item->getQty() . ' ';
     $comment .= '[' . $item->getSku() . ']' . ' ';
     $comment .= $item->getName() . ' ';
     $comment .= $item->getDescription() . ' ';
-    $comment .= $item->getBaseCalculationPrice . ' ';
+    $comment .= $item->getBaseCalculationPrice() . ' ';
+
+    $level3["LV3_ITEM".$i."_PRODUCT_CODE"] = $item->getSku();
+    $level3["LV3_ITEM".$i."_UNIT_COST"] = $item->getBaseCalculationPrice();
+    $level3["LV3_ITEM".$i."_QUANTITY"] = $item->getQty();
+    $level3["LV3_ITEM".$i."_ITEM_DESCRIPTOR"] = $item->getName();
+    $level3["LV3_ITEM".$i."_MEASURE_UNITS"] = 'EA';
+    $level3["LV3_ITEM".$i."_COMMODITY_CODE"] = '-';
+    $level3["LV3_ITEM".$i."_TAX_AMOUNT"] = round($item->getBaseCalculationPrice() * ($item->getTaxPercent() / 100), 2);
+    $level3["LV3_ITEM".$i."_TAX_RATE"] = $item->getTaxPercent() . '%';
+    $level3["LV3_ITEM".$i."_ITEM_DISCOUNT"] = '';
+    $level3["LV3_ITEM".$i."_LINE_ITEM_TOTAL"] = $item->getBaseCalculationPrice() * $item->getQty();
+    $i++;
+     
 }
 $shpfTPS = md5($_secKey . $_amount . $customerName . $city . $state . $zip . $phone . $email);
-$_url = 'https://secure.bluepay.com/interfaces/shpf?SHPF_FORM_ID=magentocc' . 
+$_url = 'https://secure.bluepay.com/interfaces/shpf?SHPF_FORM_ID=magentoccw' .  
 	'&SHPF_ACCOUNT_ID=' . urlencode($_accID) . 
 	'&SHPF_TPS_DEF=AMOUNT NAME CITY STATE ZIPCODE PHONE EMAIL' . 
 	'&SHPF_TPS=' . urlencode($shpfTPS) . 
@@ -53,8 +68,12 @@ $_url = 'https://secure.bluepay.com/interfaces/shpf?SHPF_FORM_ID=magentocc' .
 	'&COUNTRY=' . urlencode($country) . 
 	'&PHONE=' . urlencode($phone) . 
 	'&EMAIL=' . urlencode($email) .
-	'&PLUGIN_VERSION=1.5.5.2' . 
+	'&PLUGIN_VERSION=1.5.6.8' . 
 	'&COMMENT=' . urlencode($comment);
+foreach ($level3 as $key => $value) {
+	$_url .= '&' . $key . '=' . urlencode($value);
+}
+error_log($_url);
 ?>
 <html>
   <body>
@@ -65,7 +84,7 @@ iframeSocket("<?php echo $_url;?>");
 <style type="text/css">
     iframe {
         width: 100%;
-        height: 125px;
+        height: 245px;
         border: 0px;
     }
 </style>

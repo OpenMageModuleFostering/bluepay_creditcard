@@ -30,7 +30,7 @@ class BluePay_CreditCard_Model_CCPayment extends Mage_Payment_Model_Method_Cc
 {
     const CGI_URL = 'https://secure.bluepay.com/interfaces/bp10emu';
     const STQ_URL = 'https://secure.bluepay.com/interfaces/stq';
-    const CURRENT_VERSION = '1.5.6.8';
+    const CURRENT_VERSION = '1.5.5.0';
 
     const REQUEST_METHOD_CC     = 'CREDIT';
     const REQUEST_METHOD_ECHECK = 'ACH';
@@ -329,26 +329,14 @@ class BluePay_CreditCard_Model_CCPayment extends Mage_Payment_Model_Method_Cc
 		$session = Mage::getSingleton('checkout/session');
 
 		$comment = "";
-        $i = 1;
+
 		foreach ($session->getQuote()->getAllItems() as $item) {
     
 			$comment .= $item->getQty() . ' ';
 			$comment .= '[' . $item->getSku() . ']' . ' ';
 			$comment .= $item->getName() . ' ';
 			$comment .= $item->getDescription() . ' ';
-			$comment .= $item->getBaseCalculationPrice() . ' ';
-
-            $request["lv3_item".$i."_product_code"] = $item->getSku();
-            $request["lv3_item".$i."_unit_cost"] = $item->getBaseCalculationPrice();
-            $request["lv3_item".$i."_quantity"] = $item->getQty();
-            $request["lv3_item".$i."_item_descriptor"] = $item->getName();
-            $request["lv3_item".$i."_measure_units"] = 'EA';
-            $request["lv3_item".$i."_commodity_code"] = '-';
-            $request["lv3_item".$i."_tax_amount"] = round($item->getBaseCalculationPrice() * ($item->getTaxPercent() / 100), 2);
-            $request["lv3_item".$i."_tax_rate"] = $item->getTaxPercent() . '%';
-            $request["lv3_item".$i."_item_discount"] = '';
-            $request["lv3_item".$i."_line_item_total"] = $item->getBaseCalculationPrice() * $item->getQty();
-            $i++;
+			$comment .= $item->getBaseCalculationPrice . ' ';
 		}
 
 
@@ -660,6 +648,7 @@ class BluePay_CreditCard_Model_CCPayment extends Mage_Payment_Model_Method_Cc
             $data = new Varien_Object($data);
         }
         $info = $this->getInfoInstance();
+		error_log($_POST["PAYMENT_ACCOUNT"]);
         $info->setCcType($data->getCcType())
             ->setCcOwner($data->getCcOwner())
             ->setCcLast4(substr($data->getCcNumber(), -4))
