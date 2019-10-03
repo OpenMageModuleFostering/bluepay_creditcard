@@ -1,16 +1,19 @@
 {
-    "name": "OpenMageModuleFostering/BluePay_CreditCard",
+    "name": "OpenMageModuleFostering\/BluePay_CreditCard",
     "type": "magento-module",
     "license": "GNU-General-Public-License",
     "homepage": "",
     "description": "Credit Card payment module for the BluePay gateway.",
     "authors": [
-    {
-        "name": "Justin Slingerland",
-        "email": "jslingerland@bluepay.com"
-    }
-],
+        {
+            "name": "Justin Slingerland",
+            "email": "jslingerland@bluepay.com"
+        }
+    ],
     "suggest": {
-        "magento-hackathon/magento-composer-installer": "*"
-    }
+        "magento-hackathon\/magento-composer-installer": "*"
+    },
+    "keywords": [
+        "openmage-module"
+    ]
 }
